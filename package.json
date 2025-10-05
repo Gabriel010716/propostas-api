@@ -6,18 +6,6 @@
   "scripts": {
     "start": "node index.js"
   },
-  "dependencies": {
-    "express": "^4.18.2"
-  }
-}
-{
-  "name": "propostas-api",
-  "version": "1.0.0",
-  "description": "API simples de propostas",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "engines": {
     "node": "20.x"
   },
