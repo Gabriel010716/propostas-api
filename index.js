@@ -7,7 +7,9 @@ const path = require("path");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// formulário de teste
+app.use(express.json({ limit: "2mb" }));
+
+// form de teste rápido (sem front)
 app.get("/teste", (req, res) => {
   res.send(`
     <html>
@@ -26,114 +28,61 @@ app.get("/teste", (req, res) => {
   `);
 });
 
-app.get("/", (req, res) => {
-  res.send("API de Propostas funcionando 🚀");
-});
-
-// Upload em memória (sem gravar no disco)
+// upload em memória
 const upload = multer({ storage: multer.memoryStorage() });
 
-/**
- * Helper: encaixa a imagem dentro de um quadro, preservando proporção
- * Retorna {width, height, x, y} calculados
- */
-function fitImage(box, imgWidth, imgHeight) {
-  const boxRatio = box.width / box.height;
-  const imgRatio = imgWidth / imgHeight;
-
-  let width, height;
-  if (imgRatio > boxRatio) {
-    // imagem é mais “larga” => limita pela largura
-    width = box.width;
-    height = width / imgRatio;
-  } else {
-    // imagem é mais “alta” => limita pela altura
-    height = box.height;
-    width = height * imgRatio;
-  }
-  const x = box.x + (box.width - width) / 2;
-  const y = box.y + (box.height - height) / 2;
-  return { width, height, x, y };
+// helper: encaixa imagem num retângulo (mantém proporção)
+function fitImage(box, imgW, imgH) {
+  const boxR = box.width / box.height;
+  const imgR = imgW / imgH;
+  let w, h;
+  if (imgR > boxR) { w = box.width; h = w / imgR; } else { h = box.height; w = h * imgR; }
+  const x = box.x + (box.width - w) / 2;
+  const y = box.y + (box.height - h) / 2;
+  return { x, y, width: w, height: h };
 }
 
-/**
- * POST /propostas
- * Campos: cliente, descricao, quantidade, precoUnitario
- * Arquivo: imagem1 (multipart/form-data)
- * Retorna: PDF preenchido
- */
 app.post("/propostas", upload.single("imagem1"), async (req, res) => {
   try {
     const { cliente, descricao, quantidade, precoUnitario } = req.body;
-    const arquivoImagem = req.file; // buffer em memória
+    const file = req.file;
 
-    // carrega template
-    const templatePath = path.join(__dirname, "templates", "modelo.pdf");
+    // carrega seu template
+    const templatePath = path.join(process.cwd(), "templates", "modelo.pdf"); // garanta templates/modelo.pdf
     const templateBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(templateBytes);
-
-    // (opcional) fontes
+    const page = pdfDoc.getPage(0);
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const color = rgb(0, 0, 0);
 
-    // usamos a primeira página do template
-    const page = pdfDoc.getPage(0);
+    // posições iniciais — ajustamos depois
+    page.drawText(`Cliente: ${cliente}`,     { x: 80, y: 700, size: 12, font, color });
+    page.drawText(`Descrição: ${descricao}`, { x: 80, y: 680, size: 12, font, color });
+    page.drawText(`Quantidade: ${quantidade}`, { x: 80, y: 660, size: 12, font, color });
+    page.drawText(`Preço unitário: R$ ${Number(precoUnitario).toFixed(2)}`, { x: 80, y: 640, size: 12, font, color });
 
-    // ====== POSIÇÕES DOS CAMPOS ======
-    // Ajuste essas coordenadas (x, y) e tamanhos conforme seu modelo
-    // Sistema de coordenadas do pdf-lib: (0,0) é canto inferior esquerdo.
-    // Dica: comece chutando, gera o PDF e ajusta fino.
-    const campos = {
-      cliente: { x: 80, y: 700, size: 12 },
-      descricao: { x: 80, y: 680, size: 12 },
-      quantidade: { x: 80, y: 660, size: 12 },
-      precoUnitario: { x: 80, y: 640, size: 12 },
-      // quadro da imagem (onde ela deve aparecer)
-      imagem1Box: { x: 350, y: 520, width: 180, height: 180 }
-    };
+    // imagem
+    if (file?.buffer) {
+      let img;
+      try { img = await pdfDoc.embedPng(file.buffer); }
+      catch { img = await pdfDoc.embedJpg(file.buffer); }
 
-    // escreve textos
-    page.drawText(`Cliente: ${cliente}`, { x: campos.cliente.x, y: campos.cliente.y, size: campos.cliente.size, font, color });
-    page.drawText(`Descrição: ${descricao}`, { x: campos.descricao.x, y: campos.descricao.y, size: campos.descricao.size, font, color });
-    page.drawText(`Quantidade: ${quantidade}`, { x: campos.quantidade.x, y: campos.quantidade.y, size: campos.quantidade.size, font, color });
-    page.drawText(`Preço unitário: R$ ${Number(precoUnitario).toFixed(2)}`, { x: campos.precoUnitario.x, y: campos.precoUnitario.y, size: campos.precoUnitario.size, font, color });
+      const dims = img.scale(1);
+      const box = { x: 350, y: 520, width: 180, height: 180 }; // “quadro” da imagem
+      const pos = fitImage(box, dims.width, dims.height);
 
-    // insere imagem (se veio)
-    if (arquivoImagem && arquivoImagem.buffer) {
-      const bytes = arquivoImagem.buffer;
-
-      // tenta como PNG, se falhar tenta JPEG
-      let embedded, imgDims;
-      try {
-        embedded = await pdfDoc.embedPng(bytes);
-      } catch {
-        embedded = await pdfDoc.embedJpg(bytes);
-      }
-      imgDims = embedded.scale(1); // largura/altura original
-
-      // calcula melhor encaixe no retângulo (mantém aspecto)
-      const fit = fitImage(campos.imagem1Box, imgDims.width, imgDims.height);
-
-      page.drawImage(embedded, {
-        x: fit.x,
-        y: fit.y,
-        width: fit.width,
-        height: fit.height
-      });
+      page.drawImage(img, { x: pos.x, y: pos.y, width: pos.width, height: pos.height });
     }
 
-    // finaliza e devolve
-    const pdfBytes = await pdfDoc.save();
-
+    const out = await pdfDoc.save();
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", 'attachment; filename="proposta.pdf"');
-    return res.send(Buffer.from(pdfBytes));
+    res.send(Buffer.from(out));
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ erro: "Falha ao gerar PDF" });
+    res.status(500).json({ erro: "Falha ao gerar PDF" });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Servidor rodando em http://localhost:${port}`);
-});
+app.get("/", (req, res) => res.send("API de Propostas funcionando 🚀"));
+app.listen(port, "0.0.0.0", () => console.log("Rodando na porta " + port));
