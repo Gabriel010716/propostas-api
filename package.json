@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "propostas-api",
   "version": "1.0.0",
   "description": "API simples de propostas",
